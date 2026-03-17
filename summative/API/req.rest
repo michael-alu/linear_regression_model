@@ -1,0 +1,19 @@
+GET http://localhost:8000/health
+###
+POST http://localhost:8000/predict
+Content-Type: application/json
+
+{
+    "job_title": "AI Research Scientist",
+    "employment_type": "CT",
+    "industry": "Automotive",
+    "company_location": "Finland",
+    "employee_residence": "Israel",
+    "experience_level": "MI",
+    "company_size": "M",
+    "education_required": "Bachelor",
+    "remote_ratio": 100,
+    "years_experience": 2,
+    "job_description_length": 1345,
+    "benefits_score": 8.6
+}

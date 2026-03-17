@@ -26,13 +26,15 @@ This comprehensive dataset contains detailed information about AI and machine le
 
 ## Repo Structure
 
+```
 linear_regression_model/
 │
 ├── summative/
-│ ├── linear_regression/
-│ │ ├── ai_job_dataset.csv
-│ │ ├── best_model.pkl
-│ │ ├── multivariate.ipynb
-│ │ ├── scaler.pkl
-│ ├── API/
-│ ├── FlutterApp/
+│   ├── linear_regression/
+│   │   ├── ai_job_dataset.csv
+│   │   ├── best_model.pkl
+│   │   ├── multivariate.ipynb
+│   │   ├── scaler.pkl
+│   ├── API/
+│   ├── FlutterApp/
+```

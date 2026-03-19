@@ -213,8 +213,6 @@ model_path = model_dir / "best_model.pkl"
 scaler_path = model_dir / "scaler.pkl"
 columns_path = Path(base_dir / "feature_columns.json").resolve()
 
-print(base_dir)
-print(columns_path)
 
 try:
     model = joblib.load(model_path)
@@ -285,6 +283,9 @@ app = FastAPI(
     title="AI Job Market Salary Predictor API",
     version="1.0.0",
     description="Predict AI job salary (USD) from job attributes.",
+    docs_url="/docs",
+    redoc_url=None,
+    openapi_url="/openapi.json",
 )
 
 allowed_origins = [
@@ -298,6 +299,15 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+
+@app.get("/")
+def root() -> dict[str, str]:
+    return {
+        "message": "AI Job Market Salary Predictor API",
+        "swagger_ui": "/docs",
+        "health_check": "/health",
+    }
 
 
 @app.get("/health")

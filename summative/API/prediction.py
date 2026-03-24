@@ -1,3 +1,4 @@
+import io
 import json
 import os
 from pathlib import Path
@@ -6,9 +7,13 @@ from typing import Literal
 import joblib
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, confloat, conint, conlist
+from sklearn.model_selection import GridSearchCV, train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.metrics import mean_squared_error, r2_score
 
 EducationRequired = Literal["Associate", "Bachelor", "Master", "PhD"]
 ExperienceLevel = Literal["EN", "MI", "SE", "EX"]
@@ -333,6 +338,119 @@ def predict(req: PredictionRequest) -> PredictResponse:
         raise HTTPException(status_code=400, detail=f"Prediction failed: {e}")
 
     return PredictResponse(predicted_salary_usd=predicted_salary_usd)
+
+
+def _feature_engineer(df: pd.DataFrame) -> pd.DataFrame:
+    drop_cols = ["job_id", "salary_currency", "posting_date",
+                 "application_deadline", "company_name"]
+    df = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
+
+    df["experience_level"] = df["experience_level"].map(experience_order).astype(float)
+    df["company_size"] = df["company_size"].map(size_order).astype(float)
+    df["education_required"] = df["education_required"].map(education_order).astype(float)
+
+    df["job_category"] = df["job_title"].map(job_category_map)
+    df.drop(columns=["job_title"], inplace=True)
+    df = pd.get_dummies(df, columns=["job_category"], drop_first=True, dtype=int)
+
+    df["company_region"] = df["company_location"].map(region_map).fillna("Other")
+    df["employee_region"] = df["employee_residence"].map(region_map).fillna("Other")
+    df.drop(columns=["company_location", "employee_residence"], inplace=True)
+    df = pd.get_dummies(df, columns=["company_region", "employee_region"],
+                        drop_first=True, dtype=int)
+
+    df = pd.get_dummies(df, columns=["employment_type", "industry"],
+                        drop_first=True, dtype=int)
+
+    if "required_skills" in df.columns:
+        for s in all_skills:
+            col = f"skill_{s.replace(' ', '_')}"
+            df[col] = df["required_skills"].apply(
+                lambda val: 1 if isinstance(val, str) and s in val else 0
+            )
+        df.drop(columns=["required_skills"], inplace=True)
+
+    return df
+
+
+class RetrainResponse(BaseModel):
+    message: str
+    r2_score: float
+    mse: float
+    rows_used: int
+
+
+@app.post("/retrain", response_model=RetrainResponse)
+async def retrain(file: UploadFile = File(...)) -> RetrainResponse:
+    global model, scaler, feature_columns
+
+    if not file.filename or not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only .csv files are accepted.")
+
+    try:
+        contents = await file.read()
+        df = pd.read_csv(io.StringIO(contents.decode("utf-8")))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read CSV: {e}")
+
+    if "salary_usd" not in df.columns:
+        raise HTTPException(
+            status_code=400,
+            detail="CSV must contain a 'salary_usd' target column.",
+        )
+
+    try:
+        df = _feature_engineer(df)
+
+        y = df["salary_usd"]
+        x = df.drop(columns=["salary_usd"])
+
+        new_feature_columns = x.columns.tolist()
+
+        x_train, x_test, y_train, y_test = train_test_split(
+            x, y, test_size=0.2, random_state=42
+        )
+
+        new_scaler = StandardScaler()
+        x_train_scaled = new_scaler.fit_transform(x_train)
+        x_test_scaled = new_scaler.transform(x_test)
+
+        param_grid = {
+            "max_depth": [10, 20, 30],
+            "min_samples_split": [5, 10, 20],
+            "min_samples_leaf": [4, 8, 12],
+        }
+        grid = GridSearchCV(
+            DecisionTreeRegressor(random_state=42),
+            param_grid,
+            cv=5,
+            scoring="r2",
+            n_jobs=-1,
+        )
+        grid.fit(x_train_scaled, y_train)
+        new_model = grid.best_estimator_
+
+        y_pred = new_model.predict(x_test_scaled)
+        score = float(r2_score(y_test, y_pred))
+        mse = float(mean_squared_error(y_test, y_pred))
+
+        joblib.dump(new_model, model_path)
+        joblib.dump(new_scaler, scaler_path)
+        columns_path.write_text(json.dumps(new_feature_columns))
+
+        model = new_model
+        scaler = new_scaler
+        feature_columns = new_feature_columns
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Retraining failed: {e}")
+
+    return RetrainResponse(
+        message=f"Model retrained successfully. Best params: {grid.best_params_}",
+        r2_score=score,
+        mse=mse,
+        rows_used=len(df),
+    )
 
 
 if __name__ == "__main__":
